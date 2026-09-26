@@ -141,6 +141,7 @@ input:focus,select:focus,button:focus,textarea:focus{outline:2px solid var(--acc
     <div class="brand"><span id="brandTitle">🏠 Budget Planner</span><small id="subtitle">Loading…</small></div>
     <div class="row">
       <button class="btn ghost sm" id="installBtn" style="display:none;" onclick="triggerInstall()">⬇ Install App</button>
+      <button class="btn ghost sm" id="addHomeBtn" style="display:none;" onclick="showAddHomeModal()">📲 Add to Home Screen</button>
       <select id="monthSel"></select>
       <select id="yearSel"></select>
     </div>
@@ -343,6 +344,7 @@ function renderNav(){
   const dn = DB.settings.displayName;
   document.getElementById("brandTitle").textContent = dn ? `🏠 ${dn}'s Budget Planner` : "🏠 Budget Planner";
   document.getElementById("subtitle").textContent = `🔒 Local workspace • ${MONTHS[curMonth-1]} ${curYear}`;
+  checkAddHomeVisibility();
 }
 function renderTopSelects(){
   const ms=document.getElementById("monthSel"), ys=document.getElementById("yearSel");
@@ -1083,7 +1085,56 @@ function checkReminders(){
 }
 setInterval(checkReminders, 60000);
 
-checkAuth();
+/* ---------- Paid access gate (Gumroad license key via Cloudflare Worker) ---------- */
+/* CONFIGURE THESE TWO VALUES: */
+const LICENSE_WORKER_URL = "https://long-limit-1d1c.fluentpatheslcorner.workers.dev"; // your Cloudflare Worker that verifies license keys
+const GUMROAD_PRODUCT_URL = "https://yumiquest4.gumroad.com/l/ziyuria"; // your Gumroad product page link
+
+function hasValidLicense(){ return localStorage.getItem("hbp_license_ok")==="1"; }
+function showLicenseGate(err){
+  document.getElementById("header").style.display="none";
+  document.getElementById("app").innerHTML = `<div class="section" style="max-width:400px;margin:60px auto;background:transparent;box-shadow:none;border:1px solid var(--line);">
+    <h2>🔑 Unlock Budget Planner Pro</h2>
+    <p style="color:var(--sub);font-size:13px;">Enter the license key you received after purchase.</p>
+    ${err?`<div class="alertbox bad">${err}</div>`:""}
+    <div class="field"><label>License Key</label><input type="text" id="licenseInput" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off"></div>
+    <button class="btn" id="licenseSubmit" style="width:100%;margin-top:6px;">Unlock</button>
+    <p style="text-align:center;margin-top:14px;font-size:13px;">
+      <a href="${GUMROAD_PRODUCT_URL}" target="_blank" rel="noopener" style="color:var(--accent);">Don't have a key yet? Get access →</a>
+    </p>
+  </div>`;
+  const btn = document.getElementById("licenseSubmit");
+  const input = document.getElementById("licenseInput");
+  const submit = async ()=>{
+    const key = input.value.trim();
+    if(!key){ showLicenseGate("Please enter a license key."); return; }
+    btn.disabled = true; btn.textContent = "Checking…";
+    try{
+      const resp = await fetch(LICENSE_WORKER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ license_key: key })
+      });
+      const data = await resp.json();
+      if(data.valid){
+        localStorage.setItem("hbp_license_ok", "1");
+        localStorage.setItem("hbp_license_key", key);
+        checkAuth();
+      } else {
+        showLicenseGate("That license key isn't valid. Double-check it and try again.");
+      }
+    } catch(e){
+      showLicenseGate("Couldn't verify right now — check your connection and try again.");
+    }
+  };
+  btn.onclick = submit;
+  input.onkeydown = (e)=>{ if(e.key==="Enter") submit(); };
+}
+function startApp(){
+  if(hasValidLicense()){ checkAuth(); } else { showLicenseGate(); }
+}
+
+startApp();
 
 /* ---------- PWA: service worker + install prompt ---------- */
 if ("serviceWorker" in navigator) {
@@ -1106,6 +1157,38 @@ function triggerInstall(){
     const btn = document.getElementById("installBtn");
     if (btn) btn.style.display = "none";
   });
+}
+
+/* ---------- Add to Home Screen (iOS Safari has no beforeinstallprompt, so it
+   needs manual share-sheet instructions instead of the Android/desktop flow above) ---------- */
+function isIOS(){
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+}
+function isStandaloneDisplay(){
+  return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+}
+function checkAddHomeVisibility(){
+  const btn = document.getElementById("addHomeBtn");
+  if(!btn) return;
+  btn.style.display = (isIOS() && !isStandaloneDisplay()) ? "inline-block" : "none";
+}
+function showAddHomeModal(){
+  document.querySelectorAll("#addHomeBg").forEach(n=>n.remove());
+  const html = `<div class="modal-bg" id="addHomeBg"><div class="modal" style="max-width:380px;">
+    <div class="spread"><h2>📲 Add to Home Screen</h2><button class="close" id="addHomeClose">✕</button></div>
+    <p style="margin-top:0;color:var(--sub);">To install this app on your iPhone or iPad:</p>
+    <ol style="padding-left:20px;line-height:1.9;margin:0 0 16px;">
+      <li>Tap the <b>Share</b> button <span style="font-size:16px;">⬆️</span> in Safari's toolbar.</li>
+      <li>Scroll down and tap <b>Add to Home Screen</b>.</li>
+      <li>Tap <b>Add</b> in the top-right corner.</li>
+    </ol>
+    <button class="btn" id="addHomeGotIt" style="width:100%;">Got it</button>
+  </div></div>`;
+  document.body.insertAdjacentHTML("beforeend", html);
+  const bg = document.getElementById("addHomeBg");
+  document.getElementById("addHomeClose").onclick=()=>bg.remove();
+  document.getElementById("addHomeGotIt").onclick=()=>bg.remove();
+  bg.onclick=(e)=>{ if(e.target===bg) bg.remove(); };
 }
 </script>
 </body>
